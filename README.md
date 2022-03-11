@@ -38,5 +38,4 @@ A start to our custom word2vec model (to be used in other debiasing techniques) 
 
 ## 4. Bolukbasi et al. Debiasing
 
-Code related to [Bolukbasi et al.]() debaising is found in the 2016debais folder. Here, the files include:
-* 
+Code related to [Bolukbasi et al.](https://arxiv.org/pdf/1607.06520.pdf) debaising is found in the 2016debais folder. See the ReadMe in the folder for more details. ([Code credit](https://github.com/tolga-b/debiaswe))
