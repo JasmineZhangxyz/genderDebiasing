@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 #check which device pytorch will use, set default tensor type to cuda
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'Using {device} device')
-torch.set_default_tensor_type('torch.cuda.FloatTensor') #run on google colab
+#torch.set_default_tensor_type('torch.cuda.FloatTensor') #run on google colab
 
 
 class skipgram(nn.Module):
