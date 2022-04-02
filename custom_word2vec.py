@@ -1,7 +1,7 @@
 """
-Custum Word2Vec
+Custom Word2Vec
 
-For Zhao et al.'s and Savani et al.'s debiasing methods, we created our own model and skip-gram traning loops below.
+We created our own model and skip-gram traning loops below.
 """
 
 #imports
