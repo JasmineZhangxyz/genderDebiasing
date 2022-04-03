@@ -1,7 +1,7 @@
 """
-Custum Word2Vec
+Custom Word2Vec
 
-For Zhao et al.'s and Savani et al.'s debiasing methods, we created our own model and skip-gram traning loops below.
+We created our own model and skip-gram traning loops below.
 """
 
 #imports
@@ -10,11 +10,13 @@ from torch import nn, optim, sigmoid
 import tensorflow
 from keras.preprocessing.sequence import skipgrams 
 import matplotlib.pyplot as plt
+import time
+from datetime import datetime, timedelta
 
 #check which device pytorch will use, set default tensor type to cuda
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'Using {device} device')
-torch.set_default_tensor_type('torch.cuda.FloatTensor') #run on google colab
+#torch.set_default_tensor_type('torch.cuda.FloatTensor') #to run on google colab
 
 
 class skipgram(nn.Module):
@@ -48,19 +50,22 @@ class Custom_Word2Vec:
     - LR: learning rate for optimizer (default 0.01)
     - window_size: window of context words to generate skip-gram pairs (default 10)
     - EPOCHS: number of iterations to run training (default 10)
+    - min_freq: min frequency of word to be present in vocab for easier training (default 100)
     """
     
-    def __init__(self, sentance_tokens, embedding_dim=10, LR=0.01, window_size=10, EPOCHS=10):
+    def __init__(self, sentance_tokens, embedding_dim=10, LR=0.01, window_size=10, EPOCHS=10, min_freq=100):
         #hyperparamters
         self.window_size = window_size
         self.embedding_dim = embedding_dim
         self.lr = LR
         self.epochs = EPOCHS
+        self.min_freq = min_freq
         
         #data, corpus
         self.sentance_tokens = sentance_tokens
         self.corpus_vocab = self.corpus_vocab()
         self.size_vocab = len(self.corpus_vocab)
+        self.skip_grams =  self.create_target_context_pairs()
         
         #model, loss, optimizer
         self.model = skipgram(self.size_vocab, self.embedding_dim)
@@ -79,11 +84,12 @@ class Custom_Word2Vec:
             for word in sentance:
                 vocab_counts[word] = vocab_counts.get(word, 0) + 1
 
-
         #create corpus by assigning unique ids
         i = 1
         corpus_vocab = {}
-        for k, v in sorted(vocab_counts.items(), key=lambda item: item[1]):
+        for k, v in sorted(vocab_counts.items(), key=lambda item: item[1], reverse=True):
+            if (v < self.min_freq): #break if frequency too low
+                break;
             corpus_vocab[k] = i
             i+=1
 
@@ -94,12 +100,24 @@ class Custom_Word2Vec:
         generate [(target, context), 1] pairs as positive samples - contextually relevant pair
         and [(target, random), 0] pairs as negative samples - contextually irrelevant pair
         """
+            
+        print("Generating Skip Grams...")
+        tic = time.perf_counter()
         
-        #get the word ids from the corpus for all the sentances
-        word_ids_datatset = [[self.corpus_vocab[word] for word in sentance] for sentance in self.sentance_tokens]
+        #get the word ids that exist in the corpus for all the sentances
+        word_ids_datatset = []
+        for sentance in self.sentance_tokens:
+            word_ids =[]
+            for word in sentance:
+                if word in self.corpus_vocab:
+                    word_ids.append(self.corpus_vocab[word])
+            word_ids_datatset.append(word_ids)
         
         #generate skipgrams (pairs) for all sentances
         skip_grams = [skipgrams(word_ids, vocabulary_size=self.size_vocab, window_size=self.window_size) for word_ids in word_ids_datatset]
+        
+        toc = time.perf_counter()
+        print(f"...({(toc - tic)/60:0.4f}min)")
         
         return skip_grams
     
@@ -110,16 +128,21 @@ class Custom_Word2Vec:
     
     def train(self, plot=True):
         
-        skip_grams = self.create_target_context_pairs() #get pairs
-
+        #get time estimate for training
+        time_finish = datetime.now() + timedelta(seconds=(1/26)*len(self.skip_grams)*self.epochs)
+        print("Training. Curr Time =", datetime.now().strftime("%H:%M:%S"), ", Estimated Finish Time =", time_finish.strftime("%H:%M:%S"))
+        
+        tic = time.perf_counter()
         losses_epochs = []
 
         #loop over epochs
         for epoch in range(self.epochs):
+            tic_e = time.perf_counter()
             total_loss = 0
             
             #iterate through all target, context pairs
-            for pairs, labels in skip_grams:
+            for pairs, labels in self.skip_grams:
+                
                 # zero the gradients
                 self.optimizer.zero_grad()
 
@@ -141,8 +164,9 @@ class Custom_Word2Vec:
                     loss.backward()
                     total_loss+= loss.item()
                     self.optimizer.step()
-
-            print('Epoch:', epoch+1, ' Training Loss:', total_loss)
+                    
+            toc_e = time.perf_counter()
+            print(f'Epoch: {epoch+1}, Training Loss: {total_loss}  ({(toc_e - tic_e)/60:0.4f}min)')
             losses_epochs.append(total_loss)
         
         # plot loss over epochs
@@ -153,7 +177,10 @@ class Custom_Word2Vec:
             plt.xlabel('Epoch')
             plt.ylabel('Cost')
             plt.show()
-
+        
+        toc = time.perf_counter()
+        print(f"...({(toc - tic)/60:0.4f}min)")
+        
 """
 
 How to Use:
