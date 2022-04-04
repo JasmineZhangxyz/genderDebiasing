@@ -12,6 +12,10 @@ from keras.preprocessing.sequence import skipgrams
 import matplotlib.pyplot as plt
 import time
 from datetime import datetime, timedelta
+from sklearn.metrics import balanced_accuracy_score
+import numpy as np
+import math
+import copy
 
 #check which device pytorch will use, set default tensor type to cuda
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -180,6 +184,78 @@ class Custom_Word2Vec:
         
         toc = time.perf_counter()
         print(f"...({(toc - tic)/60:0.4f}min)")
+
+    # ------------------- Random Pertubation ------------------- 
+    # adapted from: https://github.com/abacusai/intraprocessing_debiasing?fbclid=IwAR3TiXq-3idbj1x4IFT4rBDpt5mHTdyYW82k7Ro6se06Etsls06LX0xEjVc
+    
+    #helpers
+    def get_best_thresh(self, threshs, margin, epsilon):
+        '''
+        calculates best threshold and its corresponding objective function output 
+        '''
+        objectives = []
+        for thresh in threshs:
+            objectives.append(self.objective_function(epsilon - margin, thresh))
+        return threshs[np.argmax(objectives)], np.max(objectives)
+
+    def compute_performance(self, thresh):
+        '''
+        Finds y_true (skip gram labels) and y_pred (model outputs with assigned 1 or 0 based on thresh), 
+        and returns an accuracy score using balanced_accuracy_score()
+        '''
+        y_true = []
+        y_pred = []
+
+        for pairs, labels in self.skip_grams:
+            for i in range (len(pairs)): #pairs in a sentance
+                target_tensor = torch.Tensor([pairs[i][0]]).long() #target word
+                context_tensor =  torch.Tensor([pairs[i][1]]).long() #context word (true or random)
+                y_true.append(labels[i])
+
+                #model output, 1 or 0 based on threshold
+                output = self.model(target_tensor, context_tensor)
+                output_np = output.detach().numpy()[0]
+                if output_np > thresh:
+                    y_pred.append(1)
+                else:
+                    y_pred.append(0)
+        
+        return balanced_accuracy_score(y_true, y_pred)
+    
+    def objective_function(self, epsilon, thresh):
+      bias = 0 #we do not have defined protected groups in this case
+      performance = self.compute_performance(thresh)
+      return - epsilon*abs(bias) - (1-epsilon)*(1-performance)
+
+
+    #main 
+    def random_debiasing(self,num_trails, stddev, margin, epsilon):
+      '''
+      Hyperparameters:
+        - num_trials - number of iterations
+        - stddev: 0.1
+        - margin: 0.01
+        - epsilon: 0.05
+      '''
+      rand_result = {'objective': -math.inf, 'model': self.model.state_dict(), 'thresh': -1}
+
+      for iteration in range(num_trails):
+          
+          for param in self.model.parameters():
+              param.data = param.data * (torch.randn_like(param) * stddev + 1)
+
+          threshs = np.linspace(0, 1, 501)
+          best_rand_thresh, best_obj = self.get_best_thresh(threshs, margin, epsilon)
+
+          if best_obj > rand_result['objective']:
+              rand_result = {'objective': best_obj, 'model': copy.deepcopy(self.model.state_dict()), 'thresh': best_rand_thresh}
+        
+          print(iteration,"/",num_trails," sampled. Best objective so far: ", rand_result["objective"], "for threshold: ", rand_result["thresh"])
+
+      print('Updating Model with best objective function results.')
+      self.model.load_state_dict(rand_result['model']) #load model which had the best objective function
+
+        
         
 """
 
@@ -190,8 +266,14 @@ How to Use:
 
 
 Example:
-word_2_vec = Custom_Word2Vec([['he', 'was', 'cool'], ['she', 'loved', 'meat'], ['you', 'do', 'nothing']])
-word_2_vec.train()
-print ("embedding: ", word_2_vec.embedding('he'))
 
+word_2_vec = Custom_Word2Vec([['he', 'was', 'cool'], ['she', 'loved', 'meat'], ['you', 'do', 'nothing']], window_size=2, min_freq=1)
+#word_2_vec.train()
+
+embedding_before = word_2_vec.embedding('he')
+
+word_2_vec.random_debiasing(10, 0.1, 0.01, 0.05)
+embedding_after = word_2_vec.embedding('he')
+
+print(embedding_before, "VS, ", embedding_after)
 """
