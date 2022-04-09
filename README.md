@@ -39,3 +39,16 @@ A start to our custom word2vec model (to be used in other debiasing techniques) 
 ## 4. Bolukbasi et al. Debiasing
 
 Code related to [Bolukbasi et al.](https://arxiv.org/pdf/1607.06520.pdf) debaising is found in the 2016debais folder. See the ReadMe in the folder for more details. ([Code credit](https://github.com/tolga-b/debiaswe))
+
+## 5. Zhao et al. Debiasing
+
+Code related to [Zhao et al.](https://arxiv.org/pdf/1809.01496.pdf) debiasing is found in the 2018debias folder, along with the debiased .txt word embeddings files.
+
+## Savani et al. Debiasing
+
+Code related to [Savani et al.](https://proceedings.neurips.cc/paper/2020/file/1d8d70dddf147d2d92a634817f01b239-Paper.pdf) debiasing is found in the Custome_Word2Vec_2020_debiasing.ipynb file. This file includes the original custome_word2vec code as well as the debiasing technique as the debiasing method requires the word embedding weights.
+
+Wiki_Word2Vec_f100_debiasing_Model_and_Bias_Measurements-Copy1.ipynb is the gensim word embedding training of 10% of the Wikipedia dataset, used for the experiments run in this project.
+large_model_w_s saves word embedding model using gensim's save function.
+wikipedia_embeddings.txt saves the word embeddings in a more generic format for other implementation.
+
