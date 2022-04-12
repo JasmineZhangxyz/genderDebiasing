@@ -16,6 +16,7 @@ from sklearn.metrics import balanced_accuracy_score
 import numpy as np
 import math
 import copy
+from numpy.linalg import norm
 
 #check which device pytorch will use, set default tensor type to cuda
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -57,7 +58,7 @@ class Custom_Word2Vec:
     - min_freq: min frequency of word to be present in vocab for easier training (default 100)
     """
     
-    def __init__(self, sentance_tokens, embedding_dim=10, LR=0.01, window_size=10, EPOCHS=10, min_freq=100):
+    def __init__(self, sentance_tokens, embedding_dim=10, LR=0.01, window_size=10, EPOCHS=10, min_freq=100, gender_pairs=[], pred_threshold=0.80, gendered_m=[],gendered_f=[], equalized_pairs=[],epsilon=0.05):
         #hyperparamters
         self.window_size = window_size
         self.embedding_dim = embedding_dim
@@ -75,7 +76,14 @@ class Custom_Word2Vec:
         self.model = skipgram(self.size_vocab, self.embedding_dim)
         self.loss_fcn = nn.BCELoss() # use binary cross entropy as the loss function
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.lr) #use stochiastic gradient descent
-
+        
+        #debiasing
+        self.gendered_pairs = gender_pairs
+        self.pred_threshold = pred_threshold
+        self.gendered_m = gendered_m
+        self.gendered_f = gendered_f
+        self.equalized_pairs = equalized_pairs
+        self.epsilon = epsilon
     
     def corpus_vocab(self):
         """
@@ -189,22 +197,38 @@ class Custom_Word2Vec:
     # adapted from: https://github.com/abacusai/intraprocessing_debiasing?fbclid=IwAR3TiXq-3idbj1x4IFT4rBDpt5mHTdyYW82k7Ro6se06Etsls06LX0xEjVc
     
     #helpers
-    def get_best_thresh(self, threshs, margin, epsilon):
+
+    def cos_sim(self,a,b):
+        '''
+        returns the cosine similarity between 2 word embeddings 
+        '''
+        return np.dot(a, b)/(norm(a)*norm(b))
+
+    def get_best_thresh(self, threshs, margin, bias):
         '''
         calculates best threshold and its corresponding objective function output 
         '''
-        objectives = []
-        for thresh in threshs:
-            objectives.append(self.objective_function(epsilon - margin, thresh))
+        objectives = self.objective_function(self.epsilon - margin, threshs, bias)
         return threshs[np.argmax(objectives)], np.max(objectives)
 
-    def compute_performance(self, thresh):
+    def objective_function(self, epsilon, threshs, bias):
+        performance_dict = self.compute_performance(threshs)
+        objectives = []
+        for thresh in threshs:
+            objectives.append(- epsilon*abs(bias) - (1-epsilon)*(1-performance_dict[thresh]))
+        return objectives
+
+    def compute_performance(self, threshs):
         '''
         Finds y_true (skip gram labels) and y_pred (model outputs with assigned 1 or 0 based on thresh), 
         and returns an accuracy score using balanced_accuracy_score()
         '''
         y_true = []
-        y_pred = []
+        thresh_pred_dict ={} #key: threshold, value: y_pred for that threshold
+
+        #initialize dict
+        for thresh in threshs:
+            thresh_pred_dict[thresh] = []
 
         for pairs, labels in self.skip_grams:
             for i in range (len(pairs)): #pairs in a sentance
@@ -215,43 +239,135 @@ class Custom_Word2Vec:
                 #model output, 1 or 0 based on threshold
                 output = self.model(target_tensor, context_tensor)
                 output_np = output.detach().numpy()[0]
-                if output_np > thresh:
-                    y_pred.append(1)
-                else:
-                    y_pred.append(0)
+                for thresh in threshs:
+                    if output_np > thresh:
+                        thresh_pred_dict[thresh].append(1)
+                    else:
+                        thresh_pred_dict[thresh].append(0)
         
-        return balanced_accuracy_score(y_true, y_pred)
-    
-    def objective_function(self, epsilon, thresh):
-      bias = 0 #we do not have defined protected groups in this case
-      performance = self.compute_performance(thresh)
-      return - epsilon*abs(bias) - (1-epsilon)*(1-performance)
+        accuracy_dict = {}
+        for thresh in threshs:
+            accuracy_dict[thresh] = balanced_accuracy_score(y_true, thresh_pred_dict[thresh])
 
+        return accuracy_dict
+    
+    def word_prediction(self,word):
+        gender_pairs = self.gender_pairs
+        thr = self.pred_threshold
+        male_pred = 0
+        female_pred = 0
+        d = 0
+        for pair in gender_pairs:
+            # 0 = female, 1 = male
+            if pair[0] in self.corpus_vocab and pair[1] in self.corpus_vocab:
+                d+=1
+                female_pred += self.cos_sim(self.embedding(pair[0]),self.embedding(word))
+                male_pred += self.cos_sim(self.embedding(pair[1]),self.embedding(word))
+        gender_sim = [male_pred/d,female_pred/d]
+        n = np.argmax(gender_sim)
+        m = max(gender_sim)
+        #male,female
+        output = [0,0]
+        if m > thr:
+            output[n] = 1
+            return output
+        else:
+          #predict gender neutral
+          return output
+    
+    def get_bias(self):
+        TPM = 0 # labeled as male & predicted as male
+        TNM = 0 # labeled as non-male & predicted as non-male
+        FPM = 0 # labeled as non-male & predicted as male
+        FNM = 0 # labeled as male & predicted as male
+        TPF = 0 # labeled as female & predicted as female
+        TNF = 0 # labeled as non-female & predicted as non-female
+        FPF = 0 # labeled as non-female & predicted as female
+        FNF = 0 # labeled as female & predicted as non-female
+
+        for word in self.corpus_vocab.keys():
+            if word in self.gendered_m:
+                label = self.word_prediction(word)
+                if label[0] == 1: #predicted as male
+                    TPM += 1
+                elif label[1] == 1: #predicted as non-male
+                    FNM += 1
+
+            elif word in self.gendered_f:
+                label = self.word_prediction(word)
+                if label[1] == 1: #predicted as female
+                    TPF += 1
+                elif label[1] == 0: #predicted as non-female
+                    FNF += 1
+            else:
+                label = self.word_prediction(word)
+                if label == [0,0]: #gender neutral
+                    TNM += 1
+                    TNF += 1
+                elif label[0] == 1:
+                    FPM += 1
+                elif label[1] == 1:
+                    FPF += 1
+
+        #print("TPM,TNM,FPM,FNM,TPF,TNF,FPF,FNF",TPM,TNM,FPM,FNM,TPF,TNF,FPF,FNF)
+        TPRM = TPM/(TPM+FNM+1)
+        TPRF = TPF/(TPF+FNF+1)
+        TNRM = TNM/(TNM+FPM+1)
+        TNRF = TNF/(TNF+FPF+1)
+        EOD = TPRM - TPRF
+
+        rho = 0
+        if EOD < self.epsilon:
+            rho = 0.5 * (TPRM + TPRF + TNRM + TNRF)
+
+        return rho
+
+    def labeling_gender(self):
+      # alternative database if needed: https://github.com/ecmonsen/gendered_words/blob/master/gendered_words.json
+      # current pairs come from 2016/data/equalize_pairs
+      # This will serve as the gender labels for the 2020 debiasing technique. Anything else will be classified as gender neutral
+      equalized_pairs = self.equalized_pairs
+      male = []
+      female = []
+      for pair in equalized_pairs:
+        male.append(pair[0])
+        female.append(pair[1])
+
+      self.gendered_m = male
+      self.gendered_f = female
+      return None
 
     #main 
-    def random_debiasing(self,num_trails, stddev, margin, epsilon):
+    def random_debiasing(self,num_trails, stddev, margin, num_threshs):
       '''
       Hyperparameters:
         - num_trials - number of iterations
         - stddev: 0.1
         - margin: 0.01
         - epsilon: 0.05
+        - num_threshs - number of thresholds to try
       '''
+      print("Estimated time to complete: ", (num_trails*77)/60, "h")
+      self.labeling_gender()
+      
       rand_result = {'objective': -math.inf, 'model': self.model.state_dict(), 'thresh': -1}
-
       for iteration in range(num_trails):
-          
-          for param in self.model.parameters():
-              param.data = param.data * (torch.randn_like(param) * stddev + 1)
+        tic = time.perf_counter()
+        for param in self.model.parameters():
+            param.data = param.data * (torch.randn_like(param) * stddev + 1)
 
-          threshs = np.linspace(0, 1, 501)
-          best_rand_thresh, best_obj = self.get_best_thresh(threshs, margin, epsilon)
+        bias = self.get_bias()
 
-          if best_obj > rand_result['objective']:
-              rand_result = {'objective': best_obj, 'model': copy.deepcopy(self.model.state_dict()), 'thresh': best_rand_thresh}
-        
-          print(iteration,"/",num_trails," sampled. Best objective so far: ", rand_result["objective"], "for threshold: ", rand_result["thresh"])
+        print("finding best threshhold ...")
+        threshs = np.linspace(0, 1, num_threshs)
+        best_rand_thresh, best_obj = self.get_best_thresh(threshs, margin, bias)
 
+        if best_obj > rand_result['objective']:
+            rand_result = {'objective': best_obj, 'model': copy.deepcopy(self.model.state_dict()), 'thresh': best_rand_thresh}
+
+        toc = time.perf_counter()
+        print(f'{iteration+1}/{num_trails} sampled. Best objective so far: {rand_result["objective"]} for threshold: {rand_result["thresh"]} ...({(toc - tic)/60:0.4f}min)')
+      
       print('Updating Model with best objective function results.')
       self.model.load_state_dict(rand_result['model']) #load model which had the best objective function
 
@@ -264,16 +380,31 @@ How to Use:
 - call the .train() function
 - acess trained embeddings via .embedding()
 
-
 Example:
 
-word_2_vec = Custom_Word2Vec([['he', 'was', 'cool'], ['she', 'loved', 'meat'], ['you', 'do', 'nothing']], window_size=2, min_freq=1)
-#word_2_vec.train()
+embedding_dim=10
+LR=0.01
+window_size=2
+EPOCHS=5
+min_freq= 1
+sen = [['he', 'was', 'cool'], ['she', 'loved', 'meat'], ['you', 'do', 'nothing']]
+
+word_2_vec = Custom_Word2Vec(sen, window_size=2, min_freq=1)
+word_2_vec.train()
+
+word_2_vec.equalized_pairs = [["monastery", "convent"], ["spokesman", "spokeswoman"], ["Catholic_priest", "nun"], ["Dad", "Mom"], ["Men", "Women"], ["councilman", "councilwoman"], ["grandpa", "grandma"], ["grandsons", "granddaughters"], ["prostate_cancer", "ovarian_cancer"], ["testosterone", "estrogen"], ["uncle", "aunt"], ["wives", "husbands"], ["Father", "Mother"], ["Grandpa", "Grandma"], ["He", "She"], ["boy", "girl"], ["boys", "girls"], ["brother", "sister"], ["brothers", "sisters"], ["businessman", "businesswoman"], ["chairman", "chairwoman"], ["colt", "filly"], ["congressman", "congresswoman"], ["dad", "mom"], ["dads", "moms"], ["dudes", "gals"], ["ex_girlfriend", "ex_boyfriend"], ["father", "mother"], ["fatherhood", "motherhood"], ["fathers", "mothers"], ["fella", "granny"], ["fraternity", "sorority"], ["gelding", "mare"], ["gentleman", "lady"], ["gentlemen", "ladies"], ["grandfather", "grandmother"], ["grandson", "granddaughter"], ["he", "she"], ["himself", "herself"], ["his", "her"], ["king", "queen"], ["kings", "queens"], ["male", "female"], ["males", "females"], ["man", "woman"], ["men", "women"], ["nephew", "niece"], ["prince", "princess"], ["schoolboy", "schoolgirl"], ["son", "daughter"], ["sons", "daughters"], ["twin_brother", "twin_sister"]]
+word_2_vec.gender_pairs = [['she','he'],['her','his'],['woman','man'],['Mary','John'],['herself','himself'],['daughter','son'],['mother','father'],['gal','guy'],['girl','boy'],['female','male']]
+word_2_vec.pred_threshold=0.55
+word_2_vec.epsilon=0.05
 
 embedding_before = word_2_vec.embedding('he')
 
-word_2_vec.random_debiasing(10, 0.1, 0.01, 0.05)
+num_trails =4 
+stddev = 0.1 #0.1
+margin = 0.01
+word_2_vec.random_debiasing(num_trails, stddev, margin)
 embedding_after = word_2_vec.embedding('he')
 
 print(embedding_before, "VS, ", embedding_after)
+
 """

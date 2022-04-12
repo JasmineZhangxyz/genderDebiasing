@@ -119,6 +119,7 @@ if __name__ == "__main__":
     gender_list = combine_gendered_lists()
 
     # ------------------- GUTENBERG DATASET -------------------
+    '''
     gutenberg_emb = embedding_dict("../embeddings/gutenberg_embeddings.txt")
     # find gendered axis for gutenberg dataset
     axis = find_gender_axis(gutenberg_emb, gender_list, size_of_emb=300)
@@ -126,11 +127,18 @@ if __name__ == "__main__":
     gutenberg_emb_debias = remove_gender_axis(gutenberg_emb, axis)
     # store debiased embedding in new file
     save_debiased_embeddings_to_file(gutenberg_emb_debias, "2018debias_gutenberg_emb.txt")
-
+    
     # ------------------- WIKIPEDIA DATASET -------------------
     wiki_emb = embedding_dict("../embeddings/wikipedia_embeddings.txt")
     axis = find_gender_axis(wiki_emb, gender_list, size_of_emb=300)
     wiki_emb_debias = remove_gender_axis(wiki_emb, axis)
-    save_debiased_embeddings_to_file(wiki_emb_debias, "2018debias_wiki_emb.txt")
+    save_debiased_embeddings_to_file(wiki_emb_debias, "2018debias_wiki_emb_NEW.txt")
+    '''
+
+    # ------------------- GUTENBERG CUSTOM DATASET -------------------
+    gutenberg_emb_custom = embedding_dict("../embeddings/gutenburg_custom_embeddings.txt")
+    axis = find_gender_axis(gutenberg_emb_custom, gender_list, size_of_emb=300)
+    gutenberg_emb_debias_custom = remove_gender_axis(gutenberg_emb_custom, axis)
+    save_debiased_embeddings_to_file(gutenberg_emb_debias_custom, "2018debias_gutenberg_emb_custom.txt")
 
 
