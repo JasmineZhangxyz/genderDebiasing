@@ -33,7 +33,7 @@ Gutenburg Books:
 ## 2. Gensim Word Embedding Model Training
 
 - **Exploring_Gender_Biases_in_Word2Vec.ipynb** is where the gensim word2vec model is defined ([Source](https://radimrehurek.com/gensim/models/word2vec.html?fbclid=IwAR2rdN_kXEqMMBNsH-ux_WjIujHiOBOSCKtAg5oBz2KV6aFQPysCDftZI8I#gensim.models.word2vec.Word2Vec)) and embedding training occurs for the Gutenberg dataset.
-- **Wiki_Word2Vec_Training.ipynb** is where the training occurs for the Wikipedia dataset.
+- **wiki/Wiki_Word2Vec_Training.ipynb** is where the training occurs for the Wikipedia dataset.
 
 ## 3. Custom Word2Vec Definition and Training
 
